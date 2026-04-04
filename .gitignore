@@ -1,0 +1,16 @@
+# Node.js and TypeScript .gitignore
+
+# Node modules
+node_modules/
+
+# Build outputs
+/dist/
+/build/
+
+# Local env files
+.env
+.env.local
+
+# IDE settings
+/.idea/
+/.vscode/
