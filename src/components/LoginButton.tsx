@@ -1,47 +1,47 @@
-import React from 'react';
-import { SignInButton, useProfile } from '@farcaster/auth-kit';
+import React, { useState } from 'react';
 
 interface LoginButtonProps {
-  onLoginSuccess?: (userData: any) => void;
-  onLoginError?: (error: string) => void;
+    onLoginSuccess?: (userData: any) => void;
+    onLoginError?: (error: string) => void;
 }
 
 export const LoginButton: React.FC<LoginButtonProps> = ({ onLoginSuccess, onLoginError }) => {
-  const { isAuthenticated, profile } = useProfile();
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-  if (isAuthenticated && profile) {
+    const handleLogin = async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const response = await fetch('/api/auth', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ action: 'initiate' }),
+            });
+            if (!response.ok) {
+                throw new Error('Failed to initiate login');
+            }
+            const { authUrl } = await response.json();
+            window.location.href = authUrl;
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'Login failed';
+            setError(errorMessage);
+            onLoginError?.(errorMessage);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
-      <div className="login-container">
-        <div className="card" style={{ textAlign: 'center', padding: '1.5rem' }}>
-          {profile.pfpUrl && (
-            <img
-              src={profile.pfpUrl}
-              alt="Profile"
-              style={{ width: 60, height: 60, borderRadius: '50%', marginBottom: '0.5rem' }}
-            />
-          )}
-          <p style={{ margin: '0.5rem 0', fontWeight: 'bold' }}>
-            {profile.displayName || profile.username}
-          </p>
-          <p style={{ margin: '0.25rem 0', color: '#666', fontSize: '0.9rem' }}>
-            @{profile.username}
-          </p>
-          <p style={{ margin: '0.25rem 0', color: '#666', fontSize: '0.85rem' }}>
-            FID: {profile.fid}
-          </p>
+        <div className="login-container">
+            <button onClick={handleLogin} disabled={loading} className="login-button">
+                {loading ? 'Signing in...' : 'Login with Farcaster'}
+            </button>
+            {error && <p className="error-message">{error}</p>}
         </div>
-      </div>
     );
-  }
-
-  return (
-    <div className="login-container">
-      <SignInButton
-        onSuccess={(res) => onLoginSuccess?.(res)}
-        onError={(err) => onLoginError?.(err?.message || 'Login failed')}
-      />
-    </div>
-  );
 };
 
 export default LoginButton;
