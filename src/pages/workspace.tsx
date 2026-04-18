@@ -24,6 +24,7 @@ interface PullResult {
 interface Account {
   id: string;
   label: string;
+  phrase: string;
   fid: string;
   packId: string;
   jsonField: string;
@@ -47,7 +48,9 @@ const Workspace: NextPage = () => {
   // Accounts
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [showAddAccount, setShowAddAccount] = useState(false);
-  const [newAccount, setNewAccount] = useState({ label: '', fid: '', packId: '', jsonField: '' });
+  const [newAccount, setNewAccount] = useState({ label: '', phrase: '', fid: '', packId: '', jsonField: '' });
+  const [showPhrase, setShowPhrase] = useState<Record<string, boolean>>({});
+  const [showNewPhrase, setShowNewPhrase] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<string>('');
 
   // Automation
@@ -77,7 +80,7 @@ const Workspace: NextPage = () => {
 
   // --- Account actions ---
   const addAccount = () => {
-    if (!newAccount.label.trim() || !newAccount.fid.trim()) return;
+    if (!newAccount.label.trim() || !newAccount.phrase.trim()) return;
     const acc: Account = {
       id: Date.now().toString(),
       ...newAccount,
@@ -86,7 +89,8 @@ const Workspace: NextPage = () => {
     const updated = [...accounts, acc];
     setAccounts(updated);
     persist('accounts', updated);
-    setNewAccount({ label: '', fid: '', packId: '', jsonField: '' });
+    setNewAccount({ label: '', phrase: '', fid: '', packId: '', jsonField: '' });
+    setShowNewPhrase(false);
     setShowAddAccount(false);
   };
 
@@ -194,14 +198,33 @@ const Workspace: NextPage = () => {
             {showAddAccount && (
               <div className={styles.card} style={{ marginBottom: '1rem' }}>
                 <h3 className={styles.cardTitle}>Akun Baru</h3>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>LABEL AKUN *</label>
+                  <input className={styles.input} placeholder="Contoh: akun-utama" value={newAccount.label}
+                    onChange={e => setNewAccount(p => ({ ...p, label: e.target.value }))} />
+                </div>
+
+                <div className={styles.formGroup}>
+                  <div className={styles.labelRow}>
+                    <label className={styles.label}>SEED PHRASE WARPCAST *</label>
+                    <button type="button" className={styles.toggleBtn} onClick={() => setShowNewPhrase(p => !p)}>
+                      {showNewPhrase ? 'Sembunyikan' : 'Tampilkan'}
+                    </button>
+                  </div>
+                  <textarea
+                    className={`${styles.input} ${styles.phraseInput}`}
+                    placeholder="Masukkan 12 atau 24 kata seed phrase Warpcast kamu..."
+                    value={newAccount.phrase}
+                    onChange={e => setNewAccount(p => ({ ...p, phrase: e.target.value }))}
+                    style={{ fontFamily: showNewPhrase ? 'monospace' : 'monospace', filter: showNewPhrase ? 'none' : 'blur(4px)' }}
+                    rows={3}
+                  />
+                  <p className={styles.phraseNote}>⚠ Disimpan lokal di browser kamu saja, tidak dikirim ke mana pun.</p>
+                </div>
+
                 <div className={styles.grid2}>
                   <div className={styles.formGroup}>
-                    <label className={styles.label}>LABEL AKUN *</label>
-                    <input className={styles.input} placeholder="Contoh: akun-utama" value={newAccount.label}
-                      onChange={e => setNewAccount(p => ({ ...p, label: e.target.value }))} />
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label}>FARCASTER FID *</label>
+                    <label className={styles.label}>FARCASTER FID</label>
                     <input className={styles.input} placeholder="Contoh: 12345" value={newAccount.fid}
                       onChange={e => setNewAccount(p => ({ ...p, fid: e.target.value }))} />
                   </div>
@@ -210,14 +233,16 @@ const Workspace: NextPage = () => {
                     <input className={styles.input} placeholder="ID pack Plinks" value={newAccount.packId}
                       onChange={e => setNewAccount(p => ({ ...p, packId: e.target.value }))} />
                   </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label}>JSON FIELD</label>
-                    <input className={styles.input} placeholder='{"key":"value"}' value={newAccount.jsonField}
-                      onChange={e => setNewAccount(p => ({ ...p, jsonField: e.target.value }))} />
-                  </div>
                 </div>
+
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>JSON FIELD (opsional)</label>
+                  <input className={styles.input} placeholder='{"key":"value"}' value={newAccount.jsonField}
+                    onChange={e => setNewAccount(p => ({ ...p, jsonField: e.target.value }))} />
+                </div>
+
                 <button className={styles.btnRun} onClick={addAccount}
-                  disabled={!newAccount.label.trim() || !newAccount.fid.trim()}>
+                  disabled={!newAccount.label.trim() || !newAccount.phrase.trim()}>
                   Simpan Akun
                 </button>
               </div>
@@ -246,12 +271,18 @@ const Workspace: NextPage = () => {
                         <button className={styles.btnDelete} onClick={() => removeAccount(acc.id)}>Hapus</button>
                       </div>
                     </div>
-                    {(acc.packId || acc.jsonField) && (
-                      <div className={styles.accountFields}>
-                        {acc.packId && <span className={styles.fieldTag}>Pack: {acc.packId}</span>}
-                        {acc.jsonField && <span className={styles.fieldTag}>JSON: {acc.jsonField.slice(0, 30)}{acc.jsonField.length > 30 ? '…' : ''}</span>}
+                    <div className={styles.accountFields}>
+                      <div className={styles.phraseRow}>
+                        <span className={styles.fieldTag} style={{ filter: showPhrase[acc.id] ? 'none' : 'blur(4px)', fontFamily: 'monospace', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {acc.phrase || '—'}
+                        </span>
+                        <button className={styles.toggleBtn} onClick={() => setShowPhrase(p => ({ ...p, [acc.id]: !p[acc.id] }))}>
+                          {showPhrase[acc.id] ? 'Sembunyikan' : 'Lihat'}
+                        </button>
                       </div>
-                    )}
+                      {acc.packId && <span className={styles.fieldTag}>Pack: {acc.packId}</span>}
+                      {acc.fid && <span className={styles.fieldTag}>FID: {acc.fid}</span>}
+                    </div>
                   </div>
                 ))}
               </div>

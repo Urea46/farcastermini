@@ -229,7 +229,36 @@
 }
 .btnDelete:hover { border-color: rgba(252,129,129,0.4); color: #fc8181; }
 
-.accountFields { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.accountFields { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; flex-direction: column; }
+
+.phraseRow { display: flex; align-items: center; gap: 0.5rem; }
+
+.labelRow { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; }
+
+.toggleBtn {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 5px;
+  color: #718096;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.toggleBtn:hover { border-color: rgba(99,179,237,0.4); color: #63b3ed; }
+
+.phraseInput { resize: vertical; line-height: 1.5; transition: filter 0.3s; }
+
+.phraseNote {
+  font-size: 0.75rem;
+  color: #d69e2e;
+  background: rgba(236, 201, 75, 0.06);
+  border: 1px solid rgba(236, 201, 75, 0.2);
+  border-radius: 6px;
+  padding: 0.4rem 0.7rem;
+  margin: 0.5rem 0 0 0;
+}
 .fieldTag {
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.08);
