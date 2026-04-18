@@ -5,6 +5,7 @@ import { useRouter } from 'next/router';
 import styles from '@/styles/Workspace.module.css';
 
 type StepStatus = 'idle' | 'running' | 'done' | 'error';
+type Tab = 'akun' | 'automation' | 'hasil';
 
 interface Step {
   id: number;
@@ -17,6 +18,16 @@ interface PullResult {
   token: string;
   amount: string;
   time: string;
+  account?: string;
+}
+
+interface Account {
+  id: string;
+  label: string;
+  fid: string;
+  packId: string;
+  jsonField: string;
+  addedAt: string;
 }
 
 const INITIAL_STEPS: Step[] = [
@@ -31,54 +42,78 @@ const INITIAL_STEPS: Step[] = [
 const Workspace: NextPage = () => {
   const router = useRouter();
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>('akun');
+
+  // Accounts
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [newAccount, setNewAccount] = useState({ label: '', fid: '', packId: '', jsonField: '' });
+  const [selectedAccount, setSelectedAccount] = useState<string>('');
+
+  // Automation
   const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
   const [running, setRunning] = useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [results, setResults] = useState<PullResult[]>([]);
+  const [completedLoops, setCompletedLoops] = useState(0);
   const [packUrl, setPackUrl] = useState('https://plinks.app');
   const [loopCount, setLoopCount] = useState(1);
-  const [completedLoops, setCompletedLoops] = useState(0);
+
+  // Results
+  const [results, setResults] = useState<PullResult[]>([]);
 
   useEffect(() => {
     const active = sessionStorage.getItem('activeWorkspace');
-    if (!active) {
-      router.replace('/');
-      return;
-    }
+    if (!active) { router.replace('/'); return; }
     setWorkspaceId(active);
-
-    const saved = localStorage.getItem(`workspace_${active}_results`);
-    if (saved) setResults(JSON.parse(saved));
+    const savedAccounts = localStorage.getItem(`ws_${active}_accounts`);
+    if (savedAccounts) setAccounts(JSON.parse(savedAccounts));
+    const savedResults = localStorage.getItem(`ws_${active}_results`);
+    if (savedResults) setResults(JSON.parse(savedResults));
   }, [router]);
 
-  const saveResults = (newResults: PullResult[]) => {
+  const persist = (key: string, data: any) => {
     if (!workspaceId) return;
-    localStorage.setItem(`workspace_${workspaceId}_results`, JSON.stringify(newResults));
+    localStorage.setItem(`ws_${workspaceId}_${key}`, JSON.stringify(data));
   };
 
-  const simulateStep = (stepIndex: number, delay: number): Promise<void> => {
-    return new Promise(resolve => {
-      setSteps(prev => prev.map((s, i) =>
-        i === stepIndex ? { ...s, status: 'running' } : s
-      ));
+  // --- Account actions ---
+  const addAccount = () => {
+    if (!newAccount.label.trim() || !newAccount.fid.trim()) return;
+    const acc: Account = {
+      id: Date.now().toString(),
+      ...newAccount,
+      addedAt: new Date().toLocaleDateString('id-ID'),
+    };
+    const updated = [...accounts, acc];
+    setAccounts(updated);
+    persist('accounts', updated);
+    setNewAccount({ label: '', fid: '', packId: '', jsonField: '' });
+    setShowAddAccount(false);
+  };
+
+  const removeAccount = (id: string) => {
+    const updated = accounts.filter(a => a.id !== id);
+    setAccounts(updated);
+    persist('accounts', updated);
+    if (selectedAccount === id) setSelectedAccount('');
+  };
+
+  // --- Automation ---
+  const simulateStep = (stepIndex: number, delay: number): Promise<void> =>
+    new Promise(resolve => {
+      setSteps(prev => prev.map((s, i) => i === stepIndex ? { ...s, status: 'running' } : s));
       setTimeout(() => {
-        setSteps(prev => prev.map((s, i) =>
-          i === stepIndex ? { ...s, status: 'done' } : s
-        ));
-        setCurrentStep(stepIndex + 1);
+        setSteps(prev => prev.map((s, i) => i === stepIndex ? { ...s, status: 'done' } : s));
         resolve();
       }, delay);
     });
-  };
 
   const runAutomation = async () => {
     setRunning(true);
     setCompletedLoops(0);
+    const acc = accounts.find(a => a.id === selectedAccount);
 
     for (let loop = 0; loop < loopCount; loop++) {
       setSteps(INITIAL_STEPS.map(s => ({ ...s, status: 'idle' })));
-      setCurrentStep(0);
-
       await simulateStep(0, 1200);
       await simulateStep(1, 900);
       await simulateStep(2, 1100);
@@ -90,33 +125,24 @@ const Workspace: NextPage = () => {
       const token = tokens[Math.floor(Math.random() * tokens.length)];
       const amount = (Math.random() * 2 + 0.1).toFixed(4);
       const newResult: PullResult = {
-        token,
-        amount,
+        token, amount,
         time: new Date().toLocaleTimeString('id-ID'),
+        account: acc?.label,
       };
       setResults(prev => {
-        const updated = [newResult, ...prev].slice(0, 50);
-        saveResults(updated);
+        const updated = [newResult, ...prev].slice(0, 100);
+        persist('results', updated);
         return updated;
       });
       setCompletedLoops(loop + 1);
-
-      if (loop < loopCount - 1) {
-        await new Promise(r => setTimeout(r, 500));
-      }
+      if (loop < loopCount - 1) await new Promise(r => setTimeout(r, 500));
     }
-
     setRunning(false);
-  };
-
-  const resetSteps = () => {
-    setSteps(INITIAL_STEPS.map(s => ({ ...s, status: 'idle' })));
-    setCurrentStep(0);
   };
 
   const clearResults = () => {
     setResults([]);
-    if (workspaceId) localStorage.removeItem(`workspace_${workspaceId}_results`);
+    if (workspaceId) localStorage.removeItem(`ws_${workspaceId}_results`);
   };
 
   const handleLogout = () => {
@@ -124,20 +150,14 @@ const Workspace: NextPage = () => {
     router.replace('/');
   };
 
-  if (!workspaceId) return null;
+  const statusIcon = (s: StepStatus) =>
+    s === 'done' ? '✓' : s === 'running' ? '⟳' : s === 'error' ? '✕' : '○';
 
-  const statusIcon = (status: StepStatus) => {
-    if (status === 'done') return '✓';
-    if (status === 'running') return '⟳';
-    if (status === 'error') return '✕';
-    return '○';
-  };
+  if (!workspaceId) return null;
 
   return (
     <>
-      <Head>
-        <title>Workspace – {workspaceId}</title>
-      </Head>
+      <Head><title>Workspace – {workspaceId}</title></Head>
       <div className={styles.page}>
         {/* Header */}
         <div className={styles.header}>
@@ -148,89 +168,203 @@ const Workspace: NextPage = () => {
         <h1 className={styles.title}>Plinks Automation</h1>
         <p className={styles.subtitle}>Otomatisasi flow pack opening di Farcaster Plinks miniapp.</p>
 
-        <div className={styles.layout}>
-          {/* Left: Config + Steps */}
-          <div className={styles.left}>
-            {/* Config */}
-            <div className={styles.card}>
-              <h2 className={styles.cardTitle}>Konfigurasi</h2>
-              <div className={styles.formGroup}>
-                <label className={styles.label}>PACK URL / MINIAPP</label>
-                <input
-                  className={styles.input}
-                  type="text"
-                  value={packUrl}
-                  onChange={e => setPackUrl(e.target.value)}
-                  placeholder="https://plinks.app"
-                  disabled={running}
-                />
-              </div>
-              <div className={styles.formGroup}>
-                <label className={styles.label}>JUMLAH LOOP</label>
-                <input
-                  className={styles.input}
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={loopCount}
-                  onChange={e => setLoopCount(Number(e.target.value))}
-                  disabled={running}
-                />
-              </div>
-              <div className={styles.btnRow}>
-                <button
-                  className={styles.btnRun}
-                  onClick={runAutomation}
-                  disabled={running}
-                >
-                  {running ? `Running... (${completedLoops}/${loopCount})` : '▶ Jalankan'}
-                </button>
-                <button
-                  className={styles.btnReset}
-                  onClick={resetSteps}
-                  disabled={running}
-                >
-                  Reset
-                </button>
-              </div>
+        {/* Tabs */}
+        <div className={styles.tabs}>
+          {(['akun', 'automation', 'hasil'] as Tab[]).map(t => (
+            <button
+              key={t}
+              className={`${styles.tab} ${tab === t ? styles.tabActive : ''}`}
+              onClick={() => setTab(t)}
+            >
+              {t === 'akun' ? `Akun (${accounts.length})` : t === 'automation' ? 'Automation' : `Hasil (${results.length})`}
+            </button>
+          ))}
+        </div>
+
+        {/* TAB: Akun */}
+        {tab === 'akun' && (
+          <div className={styles.tabContent}>
+            <div className={styles.sectionHeader}>
+              <p className={styles.sectionDesc}>Simpan akun Farcaster, Pack ID, dan JSON field untuk automation.</p>
+              <button className={styles.btnAdd} onClick={() => setShowAddAccount(!showAddAccount)}>
+                {showAddAccount ? 'Batal' : '+ Tambah Akun'}
+              </button>
             </div>
 
-            {/* Steps */}
-            <div className={styles.card}>
-              <h2 className={styles.cardTitle}>Step Progress</h2>
-              <div className={styles.steps}>
-                {steps.map((step, i) => (
-                  <div
-                    key={step.id}
-                    className={`${styles.step} ${styles[step.status]}`}
-                  >
-                    <div className={styles.stepIcon}>{statusIcon(step.status)}</div>
-                    <div className={styles.stepInfo}>
-                      <div className={styles.stepLabel}>{step.id}. {step.label}</div>
-                      <div className={styles.stepDesc}>{step.desc}</div>
+            {showAddAccount && (
+              <div className={styles.card} style={{ marginBottom: '1rem' }}>
+                <h3 className={styles.cardTitle}>Akun Baru</h3>
+                <div className={styles.grid2}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>LABEL AKUN *</label>
+                    <input className={styles.input} placeholder="Contoh: akun-utama" value={newAccount.label}
+                      onChange={e => setNewAccount(p => ({ ...p, label: e.target.value }))} />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>FARCASTER FID *</label>
+                    <input className={styles.input} placeholder="Contoh: 12345" value={newAccount.fid}
+                      onChange={e => setNewAccount(p => ({ ...p, fid: e.target.value }))} />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>PACK ID</label>
+                    <input className={styles.input} placeholder="ID pack Plinks" value={newAccount.packId}
+                      onChange={e => setNewAccount(p => ({ ...p, packId: e.target.value }))} />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>JSON FIELD</label>
+                    <input className={styles.input} placeholder='{"key":"value"}' value={newAccount.jsonField}
+                      onChange={e => setNewAccount(p => ({ ...p, jsonField: e.target.value }))} />
+                  </div>
+                </div>
+                <button className={styles.btnRun} onClick={addAccount}
+                  disabled={!newAccount.label.trim() || !newAccount.fid.trim()}>
+                  Simpan Akun
+                </button>
+              </div>
+            )}
+
+            {accounts.length === 0 ? (
+              <div className={styles.card}>
+                <p className={styles.empty}>Belum ada akun. Tambah akun dulu untuk mulai automation.</p>
+              </div>
+            ) : (
+              <div className={styles.accountList}>
+                {accounts.map(acc => (
+                  <div key={acc.id} className={`${styles.accountCard} ${selectedAccount === acc.id ? styles.accountSelected : ''}`}>
+                    <div className={styles.accountTop}>
+                      <div>
+                        <div className={styles.accountLabel}>{acc.label}</div>
+                        <div className={styles.accountMeta}>FID: {acc.fid} · Ditambah: {acc.addedAt}</div>
+                      </div>
+                      <div className={styles.accountActions}>
+                        <button
+                          className={`${styles.btnSelect} ${selectedAccount === acc.id ? styles.btnSelected : ''}`}
+                          onClick={() => setSelectedAccount(selectedAccount === acc.id ? '' : acc.id)}
+                        >
+                          {selectedAccount === acc.id ? '✓ Dipilih' : 'Pilih'}
+                        </button>
+                        <button className={styles.btnDelete} onClick={() => removeAccount(acc.id)}>Hapus</button>
+                      </div>
                     </div>
+                    {(acc.packId || acc.jsonField) && (
+                      <div className={styles.accountFields}>
+                        {acc.packId && <span className={styles.fieldTag}>Pack: {acc.packId}</span>}
+                        {acc.jsonField && <span className={styles.fieldTag}>JSON: {acc.jsonField.slice(0, 30)}{acc.jsonField.length > 30 ? '…' : ''}</span>}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB: Automation */}
+        {tab === 'automation' && (
+          <div className={styles.tabContent}>
+            <div className={styles.layout}>
+              <div className={styles.left}>
+                <div className={styles.card}>
+                  <h2 className={styles.cardTitle}>Konfigurasi</h2>
+
+                  {accounts.length > 0 && (
+                    <div className={styles.formGroup}>
+                      <label className={styles.label}>AKUN</label>
+                      <select className={styles.input} value={selectedAccount}
+                        onChange={e => setSelectedAccount(e.target.value)} disabled={running}>
+                        <option value="">— Pilih akun —</option>
+                        {accounts.map(a => (
+                          <option key={a.id} value={a.id}>{a.label} (FID: {a.fid})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>PACK URL / MINIAPP</label>
+                    <input className={styles.input} type="text" value={packUrl}
+                      onChange={e => setPackUrl(e.target.value)} placeholder="https://plinks.app" disabled={running} />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>JUMLAH LOOP</label>
+                    <input className={styles.input} type="number" min={1} max={100} value={loopCount}
+                      onChange={e => setLoopCount(Number(e.target.value))} disabled={running} />
+                  </div>
+                  <div className={styles.btnRow}>
+                    <button className={styles.btnRun} onClick={runAutomation} disabled={running}>
+                      {running ? `Running... (${completedLoops}/${loopCount})` : '▶ Jalankan'}
+                    </button>
+                    <button className={styles.btnReset}
+                      onClick={() => setSteps(INITIAL_STEPS.map(s => ({ ...s, status: 'idle' })))}
+                      disabled={running}>Reset</button>
+                  </div>
+                </div>
+
+                <div className={styles.card}>
+                  <h2 className={styles.cardTitle}>Step Progress</h2>
+                  <div className={styles.steps}>
+                    {steps.map((step, i) => (
+                      <div key={step.id} className={`${styles.step} ${styles[step.status]}`}>
+                        <div className={styles.stepIcon}>{statusIcon(step.status)}</div>
+                        <div className={styles.stepInfo}>
+                          <div className={styles.stepLabel}>{step.id}. {step.label}</div>
+                          <div className={styles.stepDesc}>{step.desc}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className={styles.right}>
+                <div className={styles.card}>
+                  <div className={styles.resultsHeader}>
+                    <h2 className={styles.cardTitle}>Hasil Terbaru ({results.length})</h2>
+                    {results.length > 0 && (
+                      <button className={styles.clearBtn} onClick={() => setTab('hasil')}>Lihat Semua →</button>
+                    )}
+                  </div>
+                  {results.length === 0 ? (
+                    <p className={styles.empty}>Belum ada hasil. Jalankan automation dulu.</p>
+                  ) : (
+                    <div className={styles.resultList}>
+                      {results.slice(0, 10).map((r, i) => (
+                        <div key={i} className={styles.resultItem}>
+                          <div>
+                            <div className={styles.resultToken}>+{r.amount} {r.token}</div>
+                            {r.account && <div className={styles.resultAccount}>{r.account}</div>}
+                          </div>
+                          <div className={styles.resultTime}>{r.time}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
+        )}
 
-          {/* Right: Results */}
-          <div className={styles.right}>
+        {/* TAB: Hasil */}
+        {tab === 'hasil' && (
+          <div className={styles.tabContent}>
             <div className={styles.card}>
               <div className={styles.resultsHeader}>
-                <h2 className={styles.cardTitle}>Hasil Pull ({results.length})</h2>
+                <h2 className={styles.cardTitle}>Semua Hasil Pull ({results.length})</h2>
                 {results.length > 0 && (
-                  <button className={styles.clearBtn} onClick={clearResults}>Hapus</button>
+                  <button className={styles.clearBtn} onClick={clearResults}>Hapus Semua</button>
                 )}
               </div>
               {results.length === 0 ? (
-                <p className={styles.empty}>Belum ada hasil. Jalankan automation dulu.</p>
+                <p className={styles.empty}>Belum ada hasil. Jalankan automation di tab Automation.</p>
               ) : (
                 <div className={styles.resultList}>
                   {results.map((r, i) => (
                     <div key={i} className={styles.resultItem}>
-                      <div className={styles.resultToken}>+{r.amount} {r.token}</div>
+                      <div>
+                        <div className={styles.resultToken}>+{r.amount} {r.token}</div>
+                        {r.account && <div className={styles.resultAccount}>{r.account}</div>}
+                      </div>
                       <div className={styles.resultTime}>{r.time}</div>
                     </div>
                   ))}
@@ -238,7 +372,7 @@ const Workspace: NextPage = () => {
               )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </>
   );
