@@ -1,1 +1,25 @@
-{\n  "name": "farcastermini",\n  "version": "1.0.0",\n  "description": "Farcaster Miniapp with Plinks integration",\n  "scripts": {\n    "dev": "next dev",\n    "build": "next build",\n    "start": "next start",\n    "lint": "eslint .",\n    "type-check": "tsc"\n  },\n  "dependencies": {\n    "next": "^14.0.0",\n    "react": "^18.0.0",\n    "react-dom": "^18.0.0",\n    "axios": "^1.4.0"\n  },\n  "devDependencies": {\n    "@types/node": "^20.0.0",\n    "@types/react": "^18.0.0",\n    "typescript": "^5.0.0",\n    "eslint": "^8.0.0",\n    "eslint-config-next": "^14.0.0"\n  }\n}
+{
+  "name": "farcastermini",
+  "version": "1.0.0",
+  "description": "Farcaster Miniapp with Plinks integration",
+  "scripts": {
+    "dev": "next dev -p 5000 -H 0.0.0.0",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "type-check": "tsc"
+  },
+  "dependencies": {
+    "next": "^14.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "axios": "^1.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.0.0",
+    "typescript": "^5.0.0",
+    "eslint": "^8.0.0",
+    "eslint-config-next": "^14.0.0"
+  }
+}
