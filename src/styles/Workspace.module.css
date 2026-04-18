@@ -342,6 +342,40 @@
 .resultAccount { font-size: 0.75rem; color: #4a5568; margin-top: 0.1rem; }
 .resultTime { font-size: 0.78rem; color: #4a5568; }
 
+/* Contracts */
+.contractList { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+
+.contractItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+}
+
+.contractLabel { font-size: 0.82rem; font-weight: 600; color: #a0aec0; }
+
+.contractAddr {
+  font-size: 0.78rem;
+  font-family: monospace;
+  color: #63b3ed;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.contractAddr:hover { color: #90cdf4; text-decoration: underline; }
+
+.txLink {
+  font-size: 0.8rem;
+  color: #718096;
+  text-decoration: none;
+  display: inline-block;
+  margin-top: 0.25rem;
+  transition: color 0.2s;
+}
+.txLink:hover { color: #a0aec0; }
+
 @media (max-width: 640px) {
   .page { padding: 1rem; }
   .title { font-size: 1.4rem; }

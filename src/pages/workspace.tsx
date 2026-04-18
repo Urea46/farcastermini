@@ -7,6 +7,19 @@ import styles from '@/styles/Workspace.module.css';
 type StepStatus = 'idle' | 'running' | 'done' | 'error';
 type Tab = 'akun' | 'automation' | 'hasil';
 
+const CONTRACTS = {
+  freePack: '0x327B576a92E874026602330756775796E7599723',
+  tokens: {
+    BRETT:  '0x532f27101965dd16442E59d40670FaF5eBB142E4',
+    DEGEN:  '0x4ed4E68C2a967522d071415e967E08f9f75a7c29',
+    MOCHI:  '0xf6e93272d11f30a507c6020ad45b85ee43d614a6',
+    ENJOY:  '0xa6b280b42cb0b1165012211624acc56828b1758c',
+    HIGHER: '0x057871ad21a1f57bf648532848310034a0b3da6f',
+  },
+  network: 'Base Mainnet',
+  explorer: 'https://basescan.org',
+};
+
 interface Step {
   id: number;
   label: string;
@@ -34,10 +47,10 @@ interface Account {
 const INITIAL_STEPS: Step[] = [
   { id: 1, label: 'Buka Miniapp Plinks', desc: 'Navigasi ke plinks.app miniapp di Farcaster', status: 'idle' },
   { id: 2, label: 'Klik Tombol Free', desc: 'Klik pack gratis yang tersedia', status: 'idle' },
-  { id: 3, label: 'Confirm Transaction', desc: 'No state changes — Network: Base, Fees: < $0.01', status: 'idle' },
+  { id: 3, label: 'Confirm Free Pack', desc: `Contract: ${CONTRACTS.freePack.slice(0,10)}… · No state changes · Base · Fees < $0.01`, status: 'idle' },
   { id: 4, label: 'Loading Game', desc: 'Menunggu game selesai loading', status: 'idle' },
-  { id: 5, label: 'Drop it!', desc: 'Klik tombol Drop it untuk reveal pack', status: 'idle' },
-  { id: 6, label: 'Confirm Pull', desc: 'Receive token reward — Confirm transaction', status: 'idle' },
+  { id: 5, label: 'Drop it!', desc: 'Klik tombol Drop it untuk reveal reward', status: 'idle' },
+  { id: 6, label: 'Confirm Reward', desc: `Contract: ${CONTRACTS.freePack.slice(0,10)}… · Receive token (BRETT/DEGEN/MOCHI/ENJOY/HIGHER) · Base`, status: 'idle' },
 ];
 
 const Workspace: NextPage = () => {
@@ -348,7 +361,7 @@ const Workspace: NextPage = () => {
               </div>
 
               <div className={styles.right}>
-                <div className={styles.card}>
+                <div className={styles.card} style={{ marginBottom: '1.5rem' }}>
                   <div className={styles.resultsHeader}>
                     <h2 className={styles.cardTitle}>Hasil Terbaru ({results.length})</h2>
                     {results.length > 0 && (
@@ -370,6 +383,42 @@ const Workspace: NextPage = () => {
                       ))}
                     </div>
                   )}
+                </div>
+
+                {/* Contracts Info */}
+                <div className={styles.card}>
+                  <h2 className={styles.cardTitle}>Contracts (Base)</h2>
+                  <div className={styles.contractList}>
+                    <div className={styles.contractItem}>
+                      <div className={styles.contractLabel}>Free Pack</div>
+                      <a
+                        href={`${CONTRACTS.explorer}/address/${CONTRACTS.freePack}`}
+                        target="_blank" rel="noreferrer"
+                        className={styles.contractAddr}
+                      >
+                        {CONTRACTS.freePack.slice(0, 8)}…{CONTRACTS.freePack.slice(-6)}
+                      </a>
+                    </div>
+                    {Object.entries(CONTRACTS.tokens).map(([name, addr]) => (
+                      <div key={name} className={styles.contractItem}>
+                        <div className={styles.contractLabel}>{name}</div>
+                        <a
+                          href={`${CONTRACTS.explorer}/token/${addr}`}
+                          target="_blank" rel="noreferrer"
+                          className={styles.contractAddr}
+                        >
+                          {addr.slice(0, 8)}…{addr.slice(-6)}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                  <a
+                    href={`${CONTRACTS.explorer}/tx/0xceb62bea90b87f83651fcdda58b2e7ec96a64a2aa0a616e067cffb34d9c7f706`}
+                    target="_blank" rel="noreferrer"
+                    className={styles.txLink}
+                  >
+                    Lihat contoh transaksi →
+                  </a>
                 </div>
               </div>
             </div>
