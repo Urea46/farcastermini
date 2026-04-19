@@ -34,6 +34,7 @@ interface PullResult {
   time: string;
   account?: string;
   txHash?: string;
+  rewardTxHash?: string;
 }
 
 interface Account {
@@ -218,31 +219,90 @@ const Workspace: NextPage = () => {
         setStepStatus(2, 'done', 'Simulated · Tambah seed phrase di tab Akun');
       }
 
-      // Step 4: Loading Game
-      setStepStatus(3, 'running');
-      await sleep(2000);
-      setStepStatus(3, 'done');
+      // Steps 4-6: Claim Reward (game/start → game/drop → transferBallRewards TX)
+      let rewardTxHash: string | undefined;
+      let rewardTokens: string[] = [];
+      let rewardAmounts: string[] = [];
 
-      // Step 5: Drop it
-      setStepStatus(4, 'running');
-      await sleep(700);
-      setStepStatus(4, 'done');
+      if (acc?.phrase && packSessionId) {
+        // Step 4: game/start
+        setStepStatus(3, 'running', 'Memanggil game/start ke Plinks...');
+        // Step 5: game/drop
+        setStepStatus(4, 'idle');
+        // Step 6: send reward TX
+        setStepStatus(5, 'idle');
 
-      // Step 6: Confirm Reward
-      setStepStatus(5, 'running');
-      await sleep(1200);
-      setStepStatus(5, 'done', txHash3
-        ? `TX: ${txHash3.slice(0, 12)}… · BRETT/DEGEN/MOCHI/ENJOY/HIGHER`
-        : 'Simulated reward');
+        try {
+          const claimRes = await fetch('/api/automation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'claimReward',
+              seedPhrase: acc.phrase,
+              sessionId: packSessionId,
+            }),
+          });
+          const claimData = await claimRes.json();
 
-      const tokens = ['BRETT', 'DEGEN', 'MOCHI', 'ENJOY', 'HIGHER'];
-      const token = tokens[Math.floor(Math.random() * tokens.length)];
-      const amount = (Math.random() * 2 + 0.1).toFixed(4);
+          if (claimData.success && claimData.rewardTxHash) {
+            setStepStatus(3, 'done', '✓ game/start OK');
+            setStepStatus(4, 'done', '✓ game/drop OK · Reward data diterima');
+            rewardTxHash = claimData.rewardTxHash;
+            rewardTokens = claimData.debug?.tokens ?? [];
+            rewardAmounts = claimData.debug?.amounts ?? [];
+            const tokenList = rewardTokens.length ? rewardTokens.map((t: string) => t.slice(0, 8) + '…').join(', ') : 'Token';
+            setStepStatus(5, 'done', `✓ Reward TX: ${rewardTxHash.slice(0, 12)}… · ${rewardTokens.length} token`);
+          } else {
+            // Partial success — show which step failed
+            const failedStep = claimData.step ?? 'unknown';
+            if (failedStep === 'game_start' || failedStep === 'auth') {
+              setStepStatus(3, 'error', `${failedStep}: ${claimData.error?.slice(0, 60)}`);
+              setStepStatus(4, 'idle');
+              setStepStatus(5, 'idle');
+            } else if (failedStep === 'game_drop' || failedStep === 'parse_reward') {
+              setStepStatus(3, 'done');
+              setStepStatus(4, 'error', `${failedStep}: ${claimData.error?.slice(0, 60)}`);
+              setStepStatus(5, 'idle');
+            } else {
+              setStepStatus(3, 'done');
+              setStepStatus(4, 'done');
+              setStepStatus(5, 'error', `${failedStep}: ${claimData.error?.slice(0, 60)}`);
+            }
+          }
+        } catch (e: any) {
+          setStepStatus(3, 'error', `Error: ${e.message?.slice(0, 60)}`);
+          setStepStatus(4, 'idle');
+          setStepStatus(5, 'idle');
+        }
+      } else if (acc?.phrase && !packSessionId) {
+        // openPack failed to return sessionId — skip reward steps
+        setStepStatus(3, 'error', 'Session ID tidak ada, skip reward');
+        setStepStatus(4, 'idle');
+        setStepStatus(5, 'idle');
+      } else {
+        // No phrase — simulate
+        setStepStatus(3, 'running');
+        await sleep(1200);
+        setStepStatus(3, 'done', 'Simulated');
+        setStepStatus(4, 'running');
+        await sleep(700);
+        setStepStatus(4, 'done', 'Simulated');
+        setStepStatus(5, 'running');
+        await sleep(900);
+        setStepStatus(5, 'done', 'Simulated reward');
+      }
+
+      const fallbackTokens = ['BRETT', 'DEGEN', 'MOCHI', 'ENJOY', 'HIGHER'];
+      const token = rewardTokens.length ? rewardTokens[0].slice(0, 8) + '…' : fallbackTokens[Math.floor(Math.random() * fallbackTokens.length)];
+      const amount = rewardAmounts.length
+        ? (Number(BigInt(rewardAmounts[0])) / 1e18).toFixed(6)
+        : (Math.random() * 2 + 0.1).toFixed(4);
       const newResult: PullResult = {
         token, amount,
         time: new Date().toLocaleTimeString('id-ID'),
         account: acc?.label,
         txHash: txHash3,
+        rewardTxHash,
       };
       setResults(prev => {
         const updated = [newResult, ...prev].slice(0, 100);
@@ -514,7 +574,12 @@ const Workspace: NextPage = () => {
                             {r.account && <div className={styles.resultAccount}>{r.account}</div>}
                             {r.txHash && (
                               <a href={`https://basescan.org/tx/${r.txHash}`} target="_blank" rel="noreferrer" className={styles.txLink2}>
-                                TX: {r.txHash.slice(0,10)}…
+                                Pack TX: {r.txHash.slice(0,10)}…
+                              </a>
+                            )}
+                            {r.rewardTxHash && (
+                              <a href={`https://basescan.org/tx/${r.rewardTxHash}`} target="_blank" rel="noreferrer" className={styles.txLink2} style={{ color: '#68d391' }}>
+                                Reward TX: {r.rewardTxHash.slice(0,10)}…
                               </a>
                             )}
                           </div>
@@ -586,7 +651,12 @@ const Workspace: NextPage = () => {
                         {r.account && <div className={styles.resultAccount}>{r.account}</div>}
                         {r.txHash && (
                           <a href={`https://basescan.org/tx/${r.txHash}`} target="_blank" rel="noreferrer" className={styles.txLink2}>
-                            TX: {r.txHash.slice(0,14)}…{r.txHash.slice(-6)}
+                            Pack TX: {r.txHash.slice(0,14)}…{r.txHash.slice(-6)}
+                          </a>
+                        )}
+                        {r.rewardTxHash && (
+                          <a href={`https://basescan.org/tx/${r.rewardTxHash}`} target="_blank" rel="noreferrer" className={styles.txLink2} style={{ color: '#68d391' }}>
+                            Reward TX: {r.rewardTxHash.slice(0,14)}…{r.rewardTxHash.slice(-6)}
                           </a>
                         )}
                       </div>

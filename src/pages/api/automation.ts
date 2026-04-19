@@ -15,6 +15,7 @@ type ApiResponse = {
   address?: string;
   balanceEth?: string;
   txHash?: string;
+  rewardTxHash?: string;
   sessionId?: string;
   token?: string;
   error?: string;
@@ -40,7 +41,6 @@ async function plinksHeaders(token?: string) {
 async function plinksAuth(account: ReturnType<typeof mnemonicToAccount>): Promise<{ token: string; user: any }> {
   const address = account.address;
 
-  // Step 1: Get nonce
   const nonceRes = await fetch(`${PLINKS_BASE}/api/auth/nonce`, {
     headers: await plinksHeaders(),
   });
@@ -48,11 +48,9 @@ async function plinksAuth(account: ReturnType<typeof mnemonicToAccount>): Promis
   const { nonce } = await nonceRes.json();
   if (!nonce) throw new Error('Nonce kosong dari Plinks');
 
-  // Step 2: Sign message (SIWE-lite style)
   const message = `Sign in to Plinks\n\nNonce: ${nonce}`;
   const signature = await account.signMessage({ message });
 
-  // Step 3: Verify — body MUST include address + nonce
   const verifyRes = await fetch(`${PLINKS_BASE}/api/auth/verify`, {
     method: 'POST',
     headers: await plinksHeaders(),
@@ -69,15 +67,33 @@ async function plinksAuth(account: ReturnType<typeof mnemonicToAccount>): Promis
 }
 
 function buildPackCalldata(sessionId: string, username: string): `0x${string}` {
-  // Encode username as bytes for the second parameter
   const usernameBuf = Buffer.from(username, 'utf8');
   const userData = ('0x' + usernameBuf.toString('hex')) as `0x${string}`;
 
   const abi = parseAbi(['function openPack(string sessionId, bytes userData) external']);
   const encoded = encodeFunctionData({ abi, functionName: 'openPack', args: [sessionId, userData] });
 
-  // Replace selector with actual Plinks selector 0x9a4d23d3
   return ('0x9a4d23d3' + encoded.slice(10)) as `0x${string}`;
+}
+
+function buildRewardCalldata(
+  sessionId: string,
+  recipient: `0x${string}`,
+  tokens: `0x${string}`[],
+  amounts: bigint[],
+  expiry: bigint,
+  signature: `0x${string}`
+): `0x${string}` {
+  const abi = parseAbi([
+    'function transferBallRewards(string sessionId, address recipient, address[] tokens, uint256[] amounts, uint256 expiry, bytes signature) external'
+  ]);
+  const encoded = encodeFunctionData({
+    abi,
+    functionName: 'transferBallRewards',
+    args: [sessionId, recipient, tokens, amounts, expiry, signature],
+  });
+  // Replace selector with actual Plinks selector 0x62e89cdc
+  return ('0x62e89cdc' + encoded.slice(10)) as `0x${string}`;
 }
 
 async function tryGetPackFromApi(token: string, username: string): Promise<string | null> {
@@ -87,7 +103,6 @@ async function tryGetPackFromApi(token: string, username: string): Promise<strin
     { url: `${PLINKS_BASE}/api/pack/free`, method: 'POST', body: JSON.stringify({ username }) },
     { url: `${PLINKS_BASE}/api/pack/session`, method: 'POST', body: JSON.stringify({ username }) },
     { url: `${PLINKS_BASE}/api/packs/free`, method: 'POST', body: JSON.stringify({}) },
-    { url: `${PLINKS_BASE}/api/game/start`, method: 'POST', body: JSON.stringify({}) },
     { url: `${PLINKS_BASE}/api/pack/open`, method: 'POST', body: JSON.stringify({}) },
     { url: `${PLINKS_BASE}/api/user/packs`, method: 'GET' },
     { url: `${PLINKS_BASE}/api/packs`, method: 'GET' },
@@ -104,6 +119,73 @@ async function tryGetPackFromApi(token: string, username: string): Promise<strin
     } catch { /* ignore */ }
   }
   return null;
+}
+
+async function gameStart(token: string, sessionId: string): Promise<any> {
+  const headers = await plinksHeaders(token);
+  const r = await fetch(`${PLINKS_BASE}/api/game/${sessionId}/start`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({}),
+  });
+  const text = await r.text();
+  if (!r.ok) throw new Error(`game/start gagal: HTTP ${r.status} — ${text.slice(0, 200)}`);
+  try { return JSON.parse(text); } catch { return { raw: text }; }
+}
+
+async function gameDrop(token: string, sessionId: string, startData: any): Promise<any> {
+  const headers = await plinksHeaders(token);
+
+  // Try with empty body first, then with various common field patterns
+  const bodies = [
+    {},
+    { sessionId },
+    { slot: Math.floor(Math.random() * 9) },
+    { position: Math.floor(Math.random() * 9) },
+    { lane: Math.floor(Math.random() * 9) },
+    startData?.ballData ? { ballData: startData.ballData } : null,
+  ].filter(Boolean);
+
+  let lastError = '';
+  for (const body of bodies) {
+    const r = await fetch(`${PLINKS_BASE}/api/game/${sessionId}/drop`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    const text = await r.text();
+    if (r.ok) {
+      try { return JSON.parse(text); } catch { return { raw: text }; }
+    }
+    lastError = `HTTP ${r.status} — ${text.slice(0, 200)}`;
+  }
+  throw new Error(`game/drop gagal: ${lastError}`);
+}
+
+function parseRewardData(data: any): {
+  tokens: `0x${string}`[];
+  amounts: bigint[];
+  expiry: bigint;
+  signature: `0x${string}`;
+} | null {
+  if (!data) return null;
+
+  // The API response might nest data under various keys
+  const d = data.data ?? data.reward ?? data.prize ?? data.result ?? data;
+
+  const rawTokens: string[] = d.tokens ?? d.tokenAddresses ?? d.tokenContracts ?? [];
+  const rawAmounts: string[] = d.amounts ?? d.tokenAmounts ?? d.values ?? [];
+  const rawExpiry: string | number = d.expiry ?? d.expiresAt ?? d.deadline ?? d.exp ?? 0;
+  const rawSig: string = d.signature ?? d.sig ?? d.proof ?? '';
+
+  if (!rawTokens.length || !rawAmounts.length || !rawSig) return null;
+
+  return {
+    tokens: rawTokens.map(t => t as `0x${string}`),
+    amounts: rawAmounts.map(a => BigInt(a)),
+    expiry: BigInt(rawExpiry),
+    signature: rawSig as `0x${string}`,
+  };
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResponse>) {
@@ -143,12 +225,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     // ── fullOpenPack ───────────────────────────────────────────
-    // 1. Auth with Plinks  2. Get/generate session UUID  3. Send tx
     if (action === 'fullOpenPack') {
       const walletClient = createWalletClient({ account, chain: base, transport: http(BASE_RPC) });
       const uname = username || address.slice(0, 10);
 
-      // Step A: Authenticate
       let authToken: string;
       let step = 'auth';
       try {
@@ -158,18 +238,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(200).json({ success: false, address, step, error: `Auth gagal: ${e.message}` });
       }
 
-      // Step B: Get pack session UUID from API, or generate one
       step = 'get_session';
       let packSessionId = sessionId as string | null;
       if (!packSessionId) {
         packSessionId = await tryGetPackFromApi(authToken, uname);
       }
       if (!packSessionId) {
-        // Generate UUID client-side (Plinks may track via on-chain events)
         packSessionId = randomUUID();
       }
 
-      // Step C: Estimate gas (validates the tx is likely to succeed)
       step = 'estimate_gas';
       const rawCalldata = buildPackCalldata(packSessionId, uname);
       let gasEstimate: bigint;
@@ -184,7 +261,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         });
       }
 
-      // Step D: Send the transaction
       step = 'send_tx';
       const txHash = await walletClient.sendTransaction({
         to: PLINKS_CONTRACT, data: rawCalldata,
@@ -195,6 +271,113 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         success: true, txHash, address,
         sessionId: packSessionId, token: authToken,
         gasEstimate: gasEstimate.toString(),
+      });
+    }
+
+    // ── claimReward ────────────────────────────────────────────
+    // Called after openPack TX confirmed. Uses sessionId + authToken from openPack step.
+    // Flow: game/start → game/drop → transferBallRewards TX
+    if (action === 'claimReward') {
+      if (!sessionId) {
+        return res.status(400).json({ success: false, error: 'sessionId diperlukan untuk claimReward' });
+      }
+
+      const walletClient = createWalletClient({ account, chain: base, transport: http(BASE_RPC) });
+      let step = 'auth';
+
+      // Auth — use provided token or re-authenticate
+      let authToken: string = token;
+      if (!authToken) {
+        try {
+          const authResult = await plinksAuth(account);
+          authToken = authResult.token;
+        } catch (e: any) {
+          return res.status(200).json({ success: false, address, step, error: `Auth gagal: ${e.message}` });
+        }
+      }
+
+      // Step A: game/start
+      step = 'game_start';
+      let startData: any;
+      try {
+        startData = await gameStart(authToken, sessionId);
+      } catch (e: any) {
+        return res.status(200).json({
+          success: false, address, step, sessionId,
+          error: e.message, debug: { sessionId },
+        });
+      }
+
+      // Step B: game/drop — get reward signing data from Plinks
+      step = 'game_drop';
+      let dropData: any;
+      try {
+        dropData = await gameDrop(authToken, sessionId, startData);
+      } catch (e: any) {
+        return res.status(200).json({
+          success: false, address, step, sessionId,
+          error: e.message, debug: { startData },
+        });
+      }
+
+      // Step C: Parse reward data from drop response
+      step = 'parse_reward';
+      const rewardData = parseRewardData(dropData);
+      if (!rewardData) {
+        return res.status(200).json({
+          success: false, address, step, sessionId,
+          error: 'Tidak dapat parse reward data dari response Plinks',
+          debug: { dropData },
+        });
+      }
+
+      const { tokens, amounts, expiry, signature: rewardSig } = rewardData;
+
+      // Step D: Build transferBallRewards calldata
+      step = 'build_reward_tx';
+      const rewardCalldata = buildRewardCalldata(
+        sessionId,
+        address,
+        tokens,
+        amounts,
+        expiry,
+        rewardSig,
+      );
+
+      // Step E: Estimate gas
+      step = 'estimate_reward_gas';
+      let rewardGas: bigint;
+      try {
+        rewardGas = await publicClient.estimateGas({
+          account: address, to: PLINKS_CONTRACT, data: rewardCalldata,
+        });
+      } catch (e: any) {
+        return res.status(200).json({
+          success: false, address, step, sessionId,
+          error: `Gas estimate reward gagal: ${e.message.slice(0, 200)}`,
+          debug: { rewardData, dropData },
+        });
+      }
+
+      // Step F: Send transferBallRewards TX
+      step = 'send_reward_tx';
+      const rewardTxHash = await walletClient.sendTransaction({
+        to: PLINKS_CONTRACT, data: rewardCalldata,
+        gas: (rewardGas * 12n) / 10n,
+      });
+
+      return res.status(200).json({
+        success: true,
+        rewardTxHash,
+        address,
+        sessionId,
+        debug: {
+          tokens,
+          amounts: amounts.map(a => a.toString()),
+          expiry: expiry.toString(),
+          startData,
+          dropData,
+        },
       });
     }
 
