@@ -51,8 +51,8 @@ const INITIAL_STEPS: Step[] = [
   { id: 1, label: 'Buka Miniapp Plinks', desc: 'Navigasi ke plinks.app miniapp', status: 'idle' },
   { id: 2, label: 'Klik Tombol Free', desc: 'Klik pack gratis yang tersedia', status: 'idle' },
   { id: 3, label: 'Auth + Confirm Free Pack', desc: 'Sign In to Plinks → fetch session → kirim TX ke Base', status: 'idle' },
-  { id: 4, label: 'Resume + Game Start', desc: 'GET /game/resume → POST /game/{id}/start', status: 'idle' },
-  { id: 5, label: 'Drop Ball', desc: 'POST /game/{id}/drop → ambil reward data', status: 'idle' },
+  { id: 4, label: 'Game Start', desc: 'POST /game/{sessionId}/start → inisiasi game', status: 'idle' },
+  { id: 5, label: 'Drop Ball', desc: 'POST /game/{sessionId}/drop → ambil reward data', status: 'idle' },
   { id: 6, label: 'Claim Reward TX', desc: `transferBallRewards → Contract: ${CONTRACTS.freePack.slice(0,10)}…`, status: 'idle' },
 ];
 
@@ -256,20 +256,16 @@ const Workspace: NextPage = () => {
             // Partial success — show which step failed
             const failedStep = claimData.step ?? 'unknown';
             const errMsg = claimData.error?.slice(0, 70) ?? 'Error';
-            if (failedStep === 'auth' || failedStep === 'game_resume') {
+            if (failedStep === 'auth' || failedStep === 'game_start') {
               setStepStatus(3, 'error', `${failedStep}: ${errMsg}`);
               setStepStatus(4, 'idle');
               setStepStatus(5, 'idle');
-            } else if (failedStep === 'game_start') {
-              setStepStatus(3, 'done', '✓ resume OK');
-              setStepStatus(4, 'error', `start: ${errMsg}`);
-              setStepStatus(5, 'idle');
             } else if (failedStep === 'game_drop' || failedStep === 'parse_reward') {
-              setStepStatus(3, 'done', '✓ resume + start OK');
+              setStepStatus(3, 'done', '✓ start OK');
               setStepStatus(4, 'error', `${failedStep}: ${errMsg}`);
               setStepStatus(5, 'idle');
             } else {
-              setStepStatus(3, 'done', '✓ resume + start OK');
+              setStepStatus(3, 'done', '✓ start OK');
               setStepStatus(4, 'done', '✓ drop OK');
               setStepStatus(5, 'error', `${failedStep}: ${errMsg}`);
             }

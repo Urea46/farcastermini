@@ -262,11 +262,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(200).json({ success: false, address, step, error: `Auth gagal: ${e.message}` });
       }
 
+      // Get session ID from server BEFORE TX — resume pre-registers the session
       step = 'get_session';
       let packSessionId = sessionId as string | null;
+
+      // 1. Try resume endpoint first (server-pre-registered session)
+      if (!packSessionId) {
+        try {
+          const resumeResult = await gameResume(authToken, address);
+          const fromResume =
+            resumeResult?.sessionId ??
+            resumeResult?.id ??
+            resumeResult?.gameId ??
+            resumeResult?.packSessionId ??
+            resumeResult?.session?.id ??
+            resumeResult?.game?.sessionId ??
+            resumeResult?.game?.id;
+          if (fromResume) packSessionId = fromResume;
+        } catch { /* fall through to other methods */ }
+      }
+
+      // 2. Try other pack API candidates
       if (!packSessionId) {
         packSessionId = await tryGetPackFromApi(authToken, uname);
       }
+
+      // 3. Last resort — generate UUID (will likely fail game/start later)
       if (!packSessionId) {
         packSessionId = randomUUID();
       }
@@ -299,8 +320,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     // ── claimReward ────────────────────────────────────────────
-    // Flow: resume (get pending game) → start → drop → transferBallRewards TX
+    // Flow: start (with session from fullOpenPack) → drop → transferBallRewards TX
     if (action === 'claimReward') {
+      if (!sessionId) {
+        return res.status(400).json({ success: false, error: 'sessionId diperlukan untuk claimReward' });
+      }
+
       const walletClient = createWalletClient({ account, chain: base, transport: http(BASE_RPC) });
       let step = 'auth';
 
@@ -315,93 +340,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         }
       }
 
-      // Brief delay to allow Plinks backend to index the on-chain TX
-      await new Promise(r => setTimeout(r, 4000));
+      // Wait for Plinks backend to process the on-chain TX
+      await new Promise(r => setTimeout(r, 5000));
 
-      // Step A: game/resume — get pending session for this wallet
-      step = 'game_resume';
-      let resumeData: any = null;
-      let activeSessionId: string = sessionId;
-      try {
-        resumeData = await gameResume(authToken, address);
-        // Extract session ID from resume response
-        const fromResume =
-          resumeData?.sessionId ??
-          resumeData?.id ??
-          resumeData?.gameId ??
-          resumeData?.packSessionId ??
-          resumeData?.session?.id ??
-          resumeData?.game?.sessionId ??
-          resumeData?.game?.id;
-
-        if (fromResume) activeSessionId = fromResume;
-
-        // Check if resume already returns reward data (direct claim path)
-        const directReward = parseRewardData(resumeData);
-        if (directReward && activeSessionId) {
-          // resume returned full reward data — skip start/drop, go straight to TX
-          const { tokens, amounts, expiry, signature: rewardSig } = directReward;
-          step = 'send_reward_tx';
-          const rewardCalldata = buildRewardCalldata(activeSessionId, address, tokens, amounts, expiry, rewardSig);
-          let rewardGas: bigint;
-          try {
-            rewardGas = await publicClient.estimateGas({ account: address, to: PLINKS_CONTRACT, data: rewardCalldata });
-          } catch (e: any) {
-            return res.status(200).json({
-              success: false, address, step, sessionId: activeSessionId,
-              error: `Gas estimate gagal: ${e.message.slice(0, 200)}`,
-              debug: { resumeData, directReward },
-            });
-          }
-          const rewardTxHash = await walletClient.sendTransaction({
-            to: PLINKS_CONTRACT, data: rewardCalldata, gas: (rewardGas * 12n) / 10n,
-          });
-          return res.status(200).json({
-            success: true, rewardTxHash, address, sessionId: activeSessionId,
-            debug: { tokens, amounts: amounts.map(a => a.toString()), expiry: expiry.toString(), resumeData },
-          });
-        }
-      } catch (e: any) {
-        // resume failing is non-fatal — fall back to provided sessionId
-        resumeData = { error: e.message };
-      }
-
-      if (!activeSessionId) {
-        return res.status(200).json({
-          success: false, address, step: 'game_resume',
-          error: 'Tidak ada sessionId — resume kosong dan tidak ada sessionId yang diberikan',
-          debug: { resumeData },
-        });
-      }
-
-      // Step B: game/start
-      // Try activeSessionId (from resume) first, then fall back to provided sessionId
+      // Step A: game/start — use session ID from fullOpenPack (server pre-registered)
+      // If that fails, poll resume to get the fresh pending session
       step = 'game_start';
       let startData: any;
-      const sessionCandidates = [...new Set([activeSessionId, sessionId].filter(Boolean))];
+      let activeSessionId = sessionId;
       let startError = '';
-      for (const sid of sessionCandidates) {
+
+      // Try up to 4 times with 5s intervals (total ~20s window)
+      for (let attempt = 0; attempt < 4; attempt++) {
         try {
-          startData = await gameStart(authToken, sid, address);
-          activeSessionId = sid; // update to whichever worked
+          startData = await gameStart(authToken, activeSessionId, address);
           break;
         } catch (e: any) {
           startError = e.message;
-          // If "Pack not found", wait briefly and retry once (backend may not have indexed TX yet)
-          if (e.message.includes('404') || e.message.includes('not found')) {
-            await new Promise(r => setTimeout(r, 3000));
+          // On 404 "Pack not found" — try resume to get updated session, then retry
+          if ((e.message.includes('404') || e.message.includes('not found')) && attempt < 3) {
+            await new Promise(r => setTimeout(r, 5000));
             try {
-              startData = await gameStart(authToken, sid, address);
-              activeSessionId = sid;
-              break;
-            } catch { /* try next candidate */ }
+              const resumeResult = await gameResume(authToken, address);
+              const fromResume =
+                resumeResult?.sessionId ?? resumeResult?.id ?? resumeResult?.gameId ??
+                resumeResult?.packSessionId ?? resumeResult?.session?.id ??
+                resumeResult?.game?.sessionId ?? resumeResult?.game?.id;
+              if (fromResume) activeSessionId = fromResume;
+            } catch { /* keep current sessionId */ }
+          } else {
+            break;
           }
         }
       }
+
       if (!startData) {
         return res.status(200).json({
           success: false, address, step, sessionId: activeSessionId,
-          error: startError, debug: { resumeData, triedSessions: sessionCandidates },
+          error: startError, debug: { triedSession: activeSessionId },
         });
       }
 
