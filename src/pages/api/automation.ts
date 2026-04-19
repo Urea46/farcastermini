@@ -132,15 +132,20 @@ async function gameResume(token: string, address: string): Promise<any> {
   try { return JSON.parse(text); } catch { return { raw: text }; }
 }
 
-async function gameStart(token: string, sessionId: string): Promise<any> {
+async function gameStart(token: string, sessionId: string, address: string): Promise<any> {
   const headers = await plinksHeaders(token);
+  const body = {
+    userAddress: address,
+    walletAddress: address,
+    address,
+  };
   const r = await fetch(`${PLINKS_BASE}/api/game/${sessionId}/start`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({}),
+    body: JSON.stringify(body),
   });
   const text = await r.text();
-  if (!r.ok) throw new Error(`game/start gagal: HTTP ${r.status} — ${text.slice(0, 200)}`);
+  if (!r.ok) throw new Error(`game/start gagal: HTTP ${r.status} — ${text.slice(0, 300)}`);
   try { return JSON.parse(text); } catch { return { raw: text }; }
 }
 
@@ -370,7 +375,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       step = 'game_start';
       let startData: any;
       try {
-        startData = await gameStart(authToken, activeSessionId);
+        startData = await gameStart(authToken, activeSessionId, address);
       } catch (e: any) {
         return res.status(200).json({
           success: false, address, step, sessionId: activeSessionId,
