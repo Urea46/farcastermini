@@ -121,6 +121,17 @@ async function tryGetPackFromApi(token: string, username: string): Promise<strin
   return null;
 }
 
+async function gameResume(token: string, address: string): Promise<any> {
+  const headers = await plinksHeaders(token);
+  const r = await fetch(`${PLINKS_BASE}/api/game/resume?walletAddress=${address}`, {
+    method: 'GET',
+    headers,
+  });
+  const text = await r.text();
+  if (!r.ok) throw new Error(`game/resume gagal: HTTP ${r.status} — ${text.slice(0, 200)}`);
+  try { return JSON.parse(text); } catch { return { raw: text }; }
+}
+
 async function gameStart(token: string, sessionId: string): Promise<any> {
   const headers = await plinksHeaders(token);
   const r = await fetch(`${PLINKS_BASE}/api/game/${sessionId}/start`, {
@@ -136,15 +147,20 @@ async function gameStart(token: string, sessionId: string): Promise<any> {
 async function gameDrop(token: string, sessionId: string, startData: any): Promise<any> {
   const headers = await plinksHeaders(token);
 
-  // Try with empty body first, then with various common field patterns
-  const bodies = [
+  // Build candidate bodies — use data from start response if available
+  const slot = Math.floor(Math.random() * 9);
+  const bodies: any[] = [
     {},
-    { sessionId },
-    { slot: Math.floor(Math.random() * 9) },
-    { position: Math.floor(Math.random() * 9) },
-    { lane: Math.floor(Math.random() * 9) },
-    startData?.ballData ? { ballData: startData.ballData } : null,
-  ].filter(Boolean);
+    { slot },
+    { position: slot },
+    { lane: slot },
+  ];
+
+  // If start returned specific fields, use them
+  if (startData?.slot !== undefined) bodies.unshift({ slot: startData.slot });
+  if (startData?.position !== undefined) bodies.unshift({ position: startData.position });
+  if (startData?.ballData) bodies.unshift({ ballData: startData.ballData });
+  if (startData?.gameData) bodies.unshift({ gameData: startData.gameData });
 
   let lastError = '';
   for (const body of bodies) {
@@ -157,7 +173,10 @@ async function gameDrop(token: string, sessionId: string, startData: any): Promi
     if (r.ok) {
       try { return JSON.parse(text); } catch { return { raw: text }; }
     }
-    lastError = `HTTP ${r.status} — ${text.slice(0, 200)}`;
+    lastError = `HTTP ${r.status} — ${text.slice(0, 300)}`;
+    // If 400/422, the body format is wrong — keep trying other formats
+    // If 401/403, stop trying (auth issue)
+    if (r.status === 401 || r.status === 403) break;
   }
   throw new Error(`game/drop gagal: ${lastError}`);
 }
@@ -275,13 +294,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     // ── claimReward ────────────────────────────────────────────
-    // Called after openPack TX confirmed. Uses sessionId + authToken from openPack step.
-    // Flow: game/start → game/drop → transferBallRewards TX
+    // Flow: resume (get pending game) → start → drop → transferBallRewards TX
     if (action === 'claimReward') {
-      if (!sessionId) {
-        return res.status(400).json({ success: false, error: 'sessionId diperlukan untuk claimReward' });
-      }
-
       const walletClient = createWalletClient({ account, chain: base, transport: http(BASE_RPC) });
       let step = 'auth';
 
@@ -296,56 +310,102 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         }
       }
 
-      // Step A: game/start
+      // Step A: game/resume — get pending session for this wallet
+      step = 'game_resume';
+      let resumeData: any = null;
+      let activeSessionId: string = sessionId;
+      try {
+        resumeData = await gameResume(authToken, address);
+        // Extract session ID from resume response
+        const fromResume =
+          resumeData?.sessionId ??
+          resumeData?.id ??
+          resumeData?.gameId ??
+          resumeData?.packSessionId ??
+          resumeData?.session?.id ??
+          resumeData?.game?.sessionId ??
+          resumeData?.game?.id;
+
+        if (fromResume) activeSessionId = fromResume;
+
+        // Check if resume already returns reward data (direct claim path)
+        const directReward = parseRewardData(resumeData);
+        if (directReward && activeSessionId) {
+          // resume returned full reward data — skip start/drop, go straight to TX
+          const { tokens, amounts, expiry, signature: rewardSig } = directReward;
+          step = 'send_reward_tx';
+          const rewardCalldata = buildRewardCalldata(activeSessionId, address, tokens, amounts, expiry, rewardSig);
+          let rewardGas: bigint;
+          try {
+            rewardGas = await publicClient.estimateGas({ account: address, to: PLINKS_CONTRACT, data: rewardCalldata });
+          } catch (e: any) {
+            return res.status(200).json({
+              success: false, address, step, sessionId: activeSessionId,
+              error: `Gas estimate gagal: ${e.message.slice(0, 200)}`,
+              debug: { resumeData, directReward },
+            });
+          }
+          const rewardTxHash = await walletClient.sendTransaction({
+            to: PLINKS_CONTRACT, data: rewardCalldata, gas: (rewardGas * 12n) / 10n,
+          });
+          return res.status(200).json({
+            success: true, rewardTxHash, address, sessionId: activeSessionId,
+            debug: { tokens, amounts: amounts.map(a => a.toString()), expiry: expiry.toString(), resumeData },
+          });
+        }
+      } catch (e: any) {
+        // resume failing is non-fatal — fall back to provided sessionId
+        resumeData = { error: e.message };
+      }
+
+      if (!activeSessionId) {
+        return res.status(200).json({
+          success: false, address, step: 'game_resume',
+          error: 'Tidak ada sessionId — resume kosong dan tidak ada sessionId yang diberikan',
+          debug: { resumeData },
+        });
+      }
+
+      // Step B: game/start
       step = 'game_start';
       let startData: any;
       try {
-        startData = await gameStart(authToken, sessionId);
+        startData = await gameStart(authToken, activeSessionId);
       } catch (e: any) {
         return res.status(200).json({
-          success: false, address, step, sessionId,
-          error: e.message, debug: { sessionId },
+          success: false, address, step, sessionId: activeSessionId,
+          error: e.message, debug: { resumeData },
         });
       }
 
-      // Step B: game/drop — get reward signing data from Plinks
+      // Step C: game/drop — get reward signing data from Plinks
       step = 'game_drop';
       let dropData: any;
       try {
-        dropData = await gameDrop(authToken, sessionId, startData);
+        dropData = await gameDrop(authToken, activeSessionId, startData);
       } catch (e: any) {
         return res.status(200).json({
-          success: false, address, step, sessionId,
-          error: e.message, debug: { startData },
+          success: false, address, step, sessionId: activeSessionId,
+          error: e.message, debug: { startData, resumeData },
         });
       }
 
-      // Step C: Parse reward data from drop response
+      // Step D: Parse reward data from drop response
       step = 'parse_reward';
       const rewardData = parseRewardData(dropData);
       if (!rewardData) {
         return res.status(200).json({
-          success: false, address, step, sessionId,
+          success: false, address, step, sessionId: activeSessionId,
           error: 'Tidak dapat parse reward data dari response Plinks',
-          debug: { dropData },
+          debug: { dropData, startData, resumeData },
         });
       }
 
       const { tokens, amounts, expiry, signature: rewardSig } = rewardData;
 
-      // Step D: Build transferBallRewards calldata
-      step = 'build_reward_tx';
-      const rewardCalldata = buildRewardCalldata(
-        sessionId,
-        address,
-        tokens,
-        amounts,
-        expiry,
-        rewardSig,
-      );
-
-      // Step E: Estimate gas
+      // Step E: Build + estimate + send transferBallRewards TX
       step = 'estimate_reward_gas';
+      const rewardCalldata = buildRewardCalldata(activeSessionId, address, tokens, amounts, expiry, rewardSig);
       let rewardGas: bigint;
       try {
         rewardGas = await publicClient.estimateGas({
@@ -353,13 +413,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         });
       } catch (e: any) {
         return res.status(200).json({
-          success: false, address, step, sessionId,
+          success: false, address, step, sessionId: activeSessionId,
           error: `Gas estimate reward gagal: ${e.message.slice(0, 200)}`,
-          debug: { rewardData, dropData },
+          debug: { rewardData, dropData, startData, resumeData },
         });
       }
 
-      // Step F: Send transferBallRewards TX
       step = 'send_reward_tx';
       const rewardTxHash = await walletClient.sendTransaction({
         to: PLINKS_CONTRACT, data: rewardCalldata,
@@ -367,16 +426,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
 
       return res.status(200).json({
-        success: true,
-        rewardTxHash,
-        address,
-        sessionId,
+        success: true, rewardTxHash, address, sessionId: activeSessionId,
         debug: {
           tokens,
           amounts: amounts.map(a => a.toString()),
           expiry: expiry.toString(),
-          startData,
-          dropData,
+          startData, dropData, resumeData,
         },
       });
     }

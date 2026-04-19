@@ -51,9 +51,9 @@ const INITIAL_STEPS: Step[] = [
   { id: 1, label: 'Buka Miniapp Plinks', desc: 'Navigasi ke plinks.app miniapp', status: 'idle' },
   { id: 2, label: 'Klik Tombol Free', desc: 'Klik pack gratis yang tersedia', status: 'idle' },
   { id: 3, label: 'Auth + Confirm Free Pack', desc: 'Sign In to Plinks → fetch session → kirim TX ke Base', status: 'idle' },
-  { id: 4, label: 'Loading Game', desc: 'Menunggu game selesai loading', status: 'idle' },
-  { id: 5, label: 'Drop it!', desc: 'Klik tombol Drop it untuk reveal reward', status: 'idle' },
-  { id: 6, label: 'Confirm Reward', desc: `Contract: ${CONTRACTS.freePack.slice(0,10)}… · BRETT/DEGEN/MOCHI/ENJOY/HIGHER`, status: 'idle' },
+  { id: 4, label: 'Resume + Game Start', desc: 'GET /game/resume → POST /game/{id}/start', status: 'idle' },
+  { id: 5, label: 'Drop Ball', desc: 'POST /game/{id}/drop → ambil reward data', status: 'idle' },
+  { id: 6, label: 'Claim Reward TX', desc: `transferBallRewards → Contract: ${CONTRACTS.freePack.slice(0,10)}…`, status: 'idle' },
 ];
 
 interface WalletInfo {
@@ -255,18 +255,23 @@ const Workspace: NextPage = () => {
           } else {
             // Partial success — show which step failed
             const failedStep = claimData.step ?? 'unknown';
-            if (failedStep === 'game_start' || failedStep === 'auth') {
-              setStepStatus(3, 'error', `${failedStep}: ${claimData.error?.slice(0, 60)}`);
+            const errMsg = claimData.error?.slice(0, 70) ?? 'Error';
+            if (failedStep === 'auth' || failedStep === 'game_resume') {
+              setStepStatus(3, 'error', `${failedStep}: ${errMsg}`);
               setStepStatus(4, 'idle');
               setStepStatus(5, 'idle');
+            } else if (failedStep === 'game_start') {
+              setStepStatus(3, 'done', '✓ resume OK');
+              setStepStatus(4, 'error', `start: ${errMsg}`);
+              setStepStatus(5, 'idle');
             } else if (failedStep === 'game_drop' || failedStep === 'parse_reward') {
-              setStepStatus(3, 'done');
-              setStepStatus(4, 'error', `${failedStep}: ${claimData.error?.slice(0, 60)}`);
+              setStepStatus(3, 'done', '✓ resume + start OK');
+              setStepStatus(4, 'error', `${failedStep}: ${errMsg}`);
               setStepStatus(5, 'idle');
             } else {
-              setStepStatus(3, 'done');
-              setStepStatus(4, 'done');
-              setStepStatus(5, 'error', `${failedStep}: ${claimData.error?.slice(0, 60)}`);
+              setStepStatus(3, 'done', '✓ resume + start OK');
+              setStepStatus(4, 'done', '✓ drop OK');
+              setStepStatus(5, 'error', `${failedStep}: ${errMsg}`);
             }
           }
         } catch (e: any) {
