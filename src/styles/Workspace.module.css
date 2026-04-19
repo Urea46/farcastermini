@@ -376,6 +376,54 @@
 }
 .txLink:hover { color: #a0aec0; }
 
+/* Wallet Info */
+.walletInfo {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: rgba(99,179,237,0.06);
+  border: 1px solid rgba(99,179,237,0.2);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.walletRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.walletLabel { font-size: 0.75rem; color: #4a5568; }
+
+.walletAddr {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #63b3ed;
+  text-decoration: none;
+}
+.walletAddr:hover { text-decoration: underline; }
+
+.walletBal { font-size: 0.82rem; font-weight: 600; color: #f6e05e; }
+
+.walletError {
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(245,101,101,0.1);
+  border: 1px solid rgba(245,101,101,0.25);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: #fc8181;
+}
+
+.txLink2 {
+  font-size: 0.75rem;
+  color: #63b3ed;
+  text-decoration: none;
+  font-family: monospace;
+}
+.txLink2:hover { text-decoration: underline; }
+
 @media (max-width: 640px) {
   .page { padding: 1rem; }
   .title { font-size: 1.4rem; }

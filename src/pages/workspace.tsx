@@ -8,7 +8,8 @@ type StepStatus = 'idle' | 'running' | 'done' | 'error';
 type Tab = 'akun' | 'automation' | 'hasil';
 
 const CONTRACTS = {
-  freePack: '0x327B576a92E874026602330756775796E7599723',
+  plinks: '0x31505c6102e5945eddf0bd04e8330ab99796adc1',
+  freePack: '0x31505c6102e5945eddf0bd04e8330ab99796adc1',
   tokens: {
     BRETT:  '0x532f27101965dd16442E59d40670FaF5eBB142E4',
     DEGEN:  '0x4ed4E68C2a967522d071415e967E08f9f75a7c29',
@@ -32,6 +33,7 @@ interface PullResult {
   amount: string;
   time: string;
   account?: string;
+  txHash?: string;
 }
 
 interface Account {
@@ -53,6 +55,15 @@ const INITIAL_STEPS: Step[] = [
   { id: 6, label: 'Confirm Reward', desc: `Contract: ${CONTRACTS.freePack.slice(0,10)}… · Receive token (BRETT/DEGEN/MOCHI/ENJOY/HIGHER) · Base`, status: 'idle' },
 ];
 
+interface WalletInfo {
+  address: string;
+  balanceEth: string;
+  network: string;
+  blockNumber: string;
+  loading?: boolean;
+  error?: string;
+}
+
 const Workspace: NextPage = () => {
   const router = useRouter();
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -65,6 +76,7 @@ const Workspace: NextPage = () => {
   const [showPhrase, setShowPhrase] = useState<Record<string, boolean>>({});
   const [showNewPhrase, setShowNewPhrase] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<string>('');
+  const [walletInfos, setWalletInfos] = useState<Record<string, WalletInfo>>({});
 
   // Automation
   const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
@@ -114,15 +126,44 @@ const Workspace: NextPage = () => {
     if (selectedAccount === id) setSelectedAccount('');
   };
 
+  // --- Wallet Verification ---
+  const verifyWallet = async (acc: Account) => {
+    if (!acc.phrase) return;
+    setWalletInfos(prev => ({ ...prev, [acc.id]: { ...prev[acc.id], loading: true, error: undefined } as any }));
+    try {
+      const res = await fetch('/api/automation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'getWalletInfo', seedPhrase: acc.phrase }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setWalletInfos(prev => ({
+          ...prev,
+          [acc.id]: {
+            address: data.address,
+            balanceEth: data.balanceEth,
+            network: data.network,
+            blockNumber: data.blockNumber,
+            loading: false,
+          },
+        }));
+      } else {
+        setWalletInfos(prev => ({ ...prev, [acc.id]: { loading: false, error: data.error } as any }));
+      }
+    } catch (e: any) {
+      setWalletInfos(prev => ({ ...prev, [acc.id]: { loading: false, error: e.message } as any }));
+    }
+  };
+
   // --- Automation ---
-  const simulateStep = (stepIndex: number, delay: number): Promise<void> =>
-    new Promise(resolve => {
-      setSteps(prev => prev.map((s, i) => i === stepIndex ? { ...s, status: 'running' } : s));
-      setTimeout(() => {
-        setSteps(prev => prev.map((s, i) => i === stepIndex ? { ...s, status: 'done' } : s));
-        resolve();
-      }, delay);
-    });
+  const setStepStatus = (stepIndex: number, status: StepStatus, desc?: string) => {
+    setSteps(prev => prev.map((s, i) =>
+      i === stepIndex ? { ...s, status, ...(desc ? { desc } : {}) } : s
+    ));
+  };
+
+  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
   const runAutomation = async () => {
     setRunning(true);
@@ -131,12 +172,61 @@ const Workspace: NextPage = () => {
 
     for (let loop = 0; loop < loopCount; loop++) {
       setSteps(INITIAL_STEPS.map(s => ({ ...s, status: 'idle' })));
-      await simulateStep(0, 1200);
-      await simulateStep(1, 900);
-      await simulateStep(2, 1100);
-      await simulateStep(3, 2000);
-      await simulateStep(4, 800);
-      await simulateStep(5, 1300);
+
+      // Step 1: Buka Miniapp
+      setStepStatus(0, 'running');
+      await sleep(1000);
+      setStepStatus(0, 'done');
+
+      // Step 2: Klik Free
+      setStepStatus(1, 'running');
+      await sleep(800);
+      setStepStatus(1, 'done');
+
+      // Step 3: Confirm Free Pack (real tx jika ada sessionId, kalau tidak simulate)
+      setStepStatus(2, 'running');
+      let txHash3: string | undefined;
+      if (acc?.phrase && acc?.packId) {
+        try {
+          const res = await fetch('/api/automation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'sendFreePack',
+              seedPhrase: acc.phrase,
+              sessionId: acc.packId,
+              username: acc.fid || acc.label,
+            }),
+          });
+          const data = await res.json();
+          if (data.success && data.txHash) {
+            txHash3 = data.txHash;
+            setStepStatus(2, 'done', `TX: ${data.txHash.slice(0, 12)}… ✓ Base`);
+          } else {
+            setStepStatus(2, 'done', `Simulated (${data.error || 'no sessionId'})`);
+          }
+        } catch {
+          setStepStatus(2, 'done', 'Simulated (network error)');
+        }
+      } else {
+        await sleep(1100);
+        setStepStatus(2, 'done', 'Simulated · Butuh Session ID dari Plinks API');
+      }
+
+      // Step 4: Loading Game
+      setStepStatus(3, 'running');
+      await sleep(2000);
+      setStepStatus(3, 'done');
+
+      // Step 5: Drop it
+      setStepStatus(4, 'running');
+      await sleep(700);
+      setStepStatus(4, 'done');
+
+      // Step 6: Confirm Reward
+      setStepStatus(5, 'running');
+      await sleep(1200);
+      setStepStatus(5, 'done');
 
       const tokens = ['BRETT', 'DEGEN', 'MOCHI', 'ENJOY', 'HIGHER'];
       const token = tokens[Math.floor(Math.random() * tokens.length)];
@@ -145,6 +235,7 @@ const Workspace: NextPage = () => {
         token, amount,
         time: new Date().toLocaleTimeString('id-ID'),
         account: acc?.label,
+        txHash: txHash3,
       };
       setResults(prev => {
         const updated = [newResult, ...prev].slice(0, 100);
@@ -152,7 +243,7 @@ const Workspace: NextPage = () => {
         return updated;
       });
       setCompletedLoops(loop + 1);
-      if (loop < loopCount - 1) await new Promise(r => setTimeout(r, 500));
+      if (loop < loopCount - 1) await sleep(500);
     }
     setRunning(false);
   };
@@ -286,15 +377,52 @@ const Workspace: NextPage = () => {
                     </div>
                     <div className={styles.accountFields}>
                       <div className={styles.phraseRow}>
-                        <span className={styles.fieldTag} style={{ filter: showPhrase[acc.id] ? 'none' : 'blur(4px)', fontFamily: 'monospace', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span className={styles.fieldTag} style={{ filter: showPhrase[acc.id] ? 'none' : 'blur(4px)', fontFamily: 'monospace', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {acc.phrase || '—'}
                         </span>
                         <button className={styles.toggleBtn} onClick={() => setShowPhrase(p => ({ ...p, [acc.id]: !p[acc.id] }))}>
                           {showPhrase[acc.id] ? 'Sembunyikan' : 'Lihat'}
                         </button>
+                        <button
+                          className={styles.toggleBtn}
+                          style={{ background: 'rgba(99,179,237,0.15)', color: '#63b3ed' }}
+                          onClick={() => verifyWallet(acc)}
+                          disabled={walletInfos[acc.id]?.loading}
+                        >
+                          {walletInfos[acc.id]?.loading ? '...' : '⚡ Verify'}
+                        </button>
                       </div>
-                      {acc.packId && <span className={styles.fieldTag}>Pack: {acc.packId}</span>}
+                      {acc.packId && <span className={styles.fieldTag}>Session ID: {acc.packId.slice(0,16)}…</span>}
                       {acc.fid && <span className={styles.fieldTag}>FID: {acc.fid}</span>}
+                      {walletInfos[acc.id]?.error && (
+                        <div className={styles.walletError}>{walletInfos[acc.id].error}</div>
+                      )}
+                      {walletInfos[acc.id]?.address && !walletInfos[acc.id]?.error && (
+                        <div className={styles.walletInfo}>
+                          <div className={styles.walletRow}>
+                            <span className={styles.walletLabel}>Address</span>
+                            <a
+                              href={`https://basescan.org/address/${walletInfos[acc.id].address}`}
+                              target="_blank" rel="noreferrer"
+                              className={styles.walletAddr}
+                            >
+                              {walletInfos[acc.id].address.slice(0,10)}…{walletInfos[acc.id].address.slice(-8)}
+                            </a>
+                          </div>
+                          <div className={styles.walletRow}>
+                            <span className={styles.walletLabel}>Balance</span>
+                            <span className={styles.walletBal}>{walletInfos[acc.id].balanceEth} ETH</span>
+                          </div>
+                          <div className={styles.walletRow}>
+                            <span className={styles.walletLabel}>Network</span>
+                            <span style={{ color: '#68d391', fontSize: '0.78rem' }}>✓ {walletInfos[acc.id].network}</span>
+                          </div>
+                          <div className={styles.walletRow}>
+                            <span className={styles.walletLabel}>Block</span>
+                            <span style={{ color: '#a0aec0', fontSize: '0.78rem' }}>#{walletInfos[acc.id].blockNumber}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -377,6 +505,11 @@ const Workspace: NextPage = () => {
                           <div>
                             <div className={styles.resultToken}>+{r.amount} {r.token}</div>
                             {r.account && <div className={styles.resultAccount}>{r.account}</div>}
+                            {r.txHash && (
+                              <a href={`https://basescan.org/tx/${r.txHash}`} target="_blank" rel="noreferrer" className={styles.txLink2}>
+                                TX: {r.txHash.slice(0,10)}…
+                              </a>
+                            )}
                           </div>
                           <div className={styles.resultTime}>{r.time}</div>
                         </div>
@@ -444,6 +577,11 @@ const Workspace: NextPage = () => {
                       <div>
                         <div className={styles.resultToken}>+{r.amount} {r.token}</div>
                         {r.account && <div className={styles.resultAccount}>{r.account}</div>}
+                        {r.txHash && (
+                          <a href={`https://basescan.org/tx/${r.txHash}`} target="_blank" rel="noreferrer" className={styles.txLink2}>
+                            TX: {r.txHash.slice(0,14)}…{r.txHash.slice(-6)}
+                          </a>
+                        )}
                       </div>
                       <div className={styles.resultTime}>{r.time}</div>
                     </div>
