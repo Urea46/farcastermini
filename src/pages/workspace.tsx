@@ -47,12 +47,12 @@ interface Account {
 }
 
 const INITIAL_STEPS: Step[] = [
-  { id: 1, label: 'Buka Miniapp Plinks', desc: 'Navigasi ke plinks.app miniapp di Farcaster', status: 'idle' },
+  { id: 1, label: 'Buka Miniapp Plinks', desc: 'Navigasi ke plinks.app miniapp', status: 'idle' },
   { id: 2, label: 'Klik Tombol Free', desc: 'Klik pack gratis yang tersedia', status: 'idle' },
-  { id: 3, label: 'Confirm Free Pack', desc: `Contract: ${CONTRACTS.freePack.slice(0,10)}… · No state changes · Base · Fees < $0.01`, status: 'idle' },
+  { id: 3, label: 'Auth + Confirm Free Pack', desc: 'Sign In to Plinks → fetch session → kirim TX ke Base', status: 'idle' },
   { id: 4, label: 'Loading Game', desc: 'Menunggu game selesai loading', status: 'idle' },
   { id: 5, label: 'Drop it!', desc: 'Klik tombol Drop it untuk reveal reward', status: 'idle' },
-  { id: 6, label: 'Confirm Reward', desc: `Contract: ${CONTRACTS.freePack.slice(0,10)}… · Receive token (BRETT/DEGEN/MOCHI/ENJOY/HIGHER) · Base`, status: 'idle' },
+  { id: 6, label: 'Confirm Reward', desc: `Contract: ${CONTRACTS.freePack.slice(0,10)}… · BRETT/DEGEN/MOCHI/ENJOY/HIGHER`, status: 'idle' },
 ];
 
 interface WalletInfo {
@@ -183,34 +183,39 @@ const Workspace: NextPage = () => {
       await sleep(800);
       setStepStatus(1, 'done');
 
-      // Step 3: Confirm Free Pack (real tx jika ada sessionId, kalau tidak simulate)
+      // Step 3: Auth + Open Pack (real jika ada phrase)
       setStepStatus(2, 'running');
       let txHash3: string | undefined;
-      if (acc?.phrase && acc?.packId) {
+      let packSessionId: string | undefined;
+      if (acc?.phrase) {
         try {
           const res = await fetch('/api/automation', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              action: 'sendFreePack',
+              action: 'fullOpenPack',
               seedPhrase: acc.phrase,
-              sessionId: acc.packId,
               username: acc.fid || acc.label,
+              sessionId: acc.packId || undefined,
             }),
           });
           const data = await res.json();
           if (data.success && data.txHash) {
             txHash3 = data.txHash;
-            setStepStatus(2, 'done', `TX: ${data.txHash.slice(0, 12)}… ✓ Base`);
+            packSessionId = data.sessionId;
+            setStepStatus(2, 'done', `✓ Auth OK · TX: ${data.txHash.slice(0, 12)}… · Base`);
+          } else if (data.address) {
+            // Auth berhasil tapi session pack belum otomatis
+            setStepStatus(2, 'done', `✓ Auth OK · ${data.error || 'Butuh session ID'}`);
           } else {
-            setStepStatus(2, 'done', `Simulated (${data.error || 'no sessionId'})`);
+            setStepStatus(2, 'error', `Auth gagal: ${data.error}`);
           }
-        } catch {
-          setStepStatus(2, 'done', 'Simulated (network error)');
+        } catch (e: any) {
+          setStepStatus(2, 'error', `Error: ${e.message?.slice(0, 60)}`);
         }
       } else {
         await sleep(1100);
-        setStepStatus(2, 'done', 'Simulated · Butuh Session ID dari Plinks API');
+        setStepStatus(2, 'done', 'Simulated · Tambah seed phrase di tab Akun');
       }
 
       // Step 4: Loading Game
@@ -226,7 +231,9 @@ const Workspace: NextPage = () => {
       // Step 6: Confirm Reward
       setStepStatus(5, 'running');
       await sleep(1200);
-      setStepStatus(5, 'done');
+      setStepStatus(5, 'done', txHash3
+        ? `TX: ${txHash3.slice(0, 12)}… · BRETT/DEGEN/MOCHI/ENJOY/HIGHER`
+        : 'Simulated reward');
 
       const tokens = ['BRETT', 'DEGEN', 'MOCHI', 'ENJOY', 'HIGHER'];
       const token = tokens[Math.floor(Math.random() * tokens.length)];
