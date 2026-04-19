@@ -248,6 +248,56 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(200).json({ success: true, token: authToken, address, debug: { user } });
     }
 
+    // ── debugResume ─────────────────────────────────────────────
+    // Shows raw resume response + probes multiple session creation endpoints
+    if (action === 'debugResume') {
+      const { token: authToken } = await plinksAuth(account);
+
+      // Raw resume response
+      let resumeRaw: any = null;
+      let resumeErr = '';
+      try {
+        resumeRaw = await gameResume(authToken, address);
+      } catch (e: any) { resumeErr = e.message; }
+
+      // Probe session-creation endpoints
+      const headers = await plinksHeaders(authToken);
+      const probeResults: Record<string, any> = {};
+      const probeEndpoints = [
+        { key: 'game_init_post', url: `${PLINKS_BASE}/api/game/init`, method: 'POST', body: JSON.stringify({ walletAddress: address }) },
+        { key: 'game_create_post', url: `${PLINKS_BASE}/api/game/create`, method: 'POST', body: JSON.stringify({ walletAddress: address }) },
+        { key: 'pack_free_post', url: `${PLINKS_BASE}/api/pack/free`, method: 'POST', body: JSON.stringify({ walletAddress: address }) },
+        { key: 'pack_claim_post', url: `${PLINKS_BASE}/api/pack/claim`, method: 'POST', body: JSON.stringify({ walletAddress: address }) },
+        { key: 'pack_open_post', url: `${PLINKS_BASE}/api/pack/open`, method: 'POST', body: JSON.stringify({ walletAddress: address }) },
+        { key: 'game_session_post', url: `${PLINKS_BASE}/api/game/session`, method: 'POST', body: JSON.stringify({ walletAddress: address }) },
+        { key: 'game_new_post', url: `${PLINKS_BASE}/api/game/new`, method: 'POST', body: JSON.stringify({ walletAddress: address }) },
+        { key: 'game_get', url: `${PLINKS_BASE}/api/game?walletAddress=${address}`, method: 'GET' },
+        { key: 'packs_get', url: `${PLINKS_BASE}/api/packs?walletAddress=${address}`, method: 'GET' },
+        { key: 'user_packs_get', url: `${PLINKS_BASE}/api/user/packs`, method: 'GET' },
+        { key: 'user_game_get', url: `${PLINKS_BASE}/api/user/game`, method: 'GET' },
+        { key: 'game_status_get', url: `${PLINKS_BASE}/api/game/status?walletAddress=${address}`, method: 'GET' },
+        { key: 'game_pending_get', url: `${PLINKS_BASE}/api/game/pending?walletAddress=${address}`, method: 'GET' },
+      ];
+
+      await Promise.all(probeEndpoints.map(async (ep) => {
+        try {
+          const r = await fetch(ep.url, {
+            method: ep.method, headers,
+            ...(ep.body ? { body: ep.body } : {}),
+          });
+          const text = await r.text();
+          probeResults[ep.key] = { status: r.status, body: text.slice(0, 300) };
+        } catch (e: any) {
+          probeResults[ep.key] = { error: e.message };
+        }
+      }));
+
+      return res.status(200).json({
+        success: true, address,
+        debug: { resumeRaw, resumeErr, probeResults },
+      });
+    }
+
     // ── fullOpenPack ───────────────────────────────────────────
     if (action === 'fullOpenPack') {
       const walletClient = createWalletClient({ account, chain: base, transport: http(BASE_RPC) });

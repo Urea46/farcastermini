@@ -89,6 +89,10 @@ const Workspace: NextPage = () => {
   // Results
   const [results, setResults] = useState<PullResult[]>([]);
 
+  // Debug
+  const [debugData, setDebugData] = useState<any>(null);
+  const [debugLoading, setDebugLoading] = useState(false);
+
   useEffect(() => {
     const active = sessionStorage.getItem('activeWorkspace');
     if (!active) { router.replace('/'); return; }
@@ -165,6 +169,25 @@ const Workspace: NextPage = () => {
   };
 
   const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+  const runDebug = async () => {
+    const acc = accounts.find(a => a.id === selectedAccount);
+    if (!acc?.phrase) return alert('Pilih akun dulu');
+    setDebugLoading(true);
+    setDebugData(null);
+    try {
+      const res = await fetch('/api/automation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'debugResume', seedPhrase: acc.phrase }),
+      });
+      const data = await res.json();
+      setDebugData(data);
+    } catch (e: any) {
+      setDebugData({ error: e.message });
+    }
+    setDebugLoading(false);
+  };
 
   const runAutomation = async () => {
     setRunning(true);
@@ -537,7 +560,23 @@ const Workspace: NextPage = () => {
                     <button className={styles.btnReset}
                       onClick={() => setSteps(INITIAL_STEPS.map(s => ({ ...s, status: 'idle' })))}
                       disabled={running}>Reset</button>
+                    <button
+                      style={{ background: '#334155', color: '#94a3b8', border: '1px solid #475569', borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 13 }}
+                      onClick={runDebug} disabled={debugLoading || running}>
+                      {debugLoading ? '...' : '🔍 Debug'}
+                    </button>
                   </div>
+                  {debugData && (
+                    <div style={{ marginTop: 12, background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <span style={{ color: '#94a3b8', fontSize: 12, fontWeight: 600 }}>DEBUG OUTPUT</span>
+                        <button onClick={() => setDebugData(null)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 12 }}>✕</button>
+                      </div>
+                      <pre style={{ color: '#e2e8f0', fontSize: 11, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 400, overflowY: 'auto', margin: 0 }}>
+                        {JSON.stringify(debugData, null, 2)}
+                      </pre>
+                    </div>
+                  )}
                 </div>
 
                 <div className={styles.card}>
