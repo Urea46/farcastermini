@@ -315,6 +315,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         }
       }
 
+      // Brief delay to allow Plinks backend to index the on-chain TX
+      await new Promise(r => setTimeout(r, 4000));
+
       // Step A: game/resume — get pending session for this wallet
       step = 'game_resume';
       let resumeData: any = null;
@@ -372,14 +375,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
 
       // Step B: game/start
+      // Try activeSessionId (from resume) first, then fall back to provided sessionId
       step = 'game_start';
       let startData: any;
-      try {
-        startData = await gameStart(authToken, activeSessionId, address);
-      } catch (e: any) {
+      const sessionCandidates = [...new Set([activeSessionId, sessionId].filter(Boolean))];
+      let startError = '';
+      for (const sid of sessionCandidates) {
+        try {
+          startData = await gameStart(authToken, sid, address);
+          activeSessionId = sid; // update to whichever worked
+          break;
+        } catch (e: any) {
+          startError = e.message;
+          // If "Pack not found", wait briefly and retry once (backend may not have indexed TX yet)
+          if (e.message.includes('404') || e.message.includes('not found')) {
+            await new Promise(r => setTimeout(r, 3000));
+            try {
+              startData = await gameStart(authToken, sid, address);
+              activeSessionId = sid;
+              break;
+            } catch { /* try next candidate */ }
+          }
+        }
+      }
+      if (!startData) {
         return res.status(200).json({
           success: false, address, step, sessionId: activeSessionId,
-          error: e.message, debug: { resumeData },
+          error: startError, debug: { resumeData, triedSessions: sessionCandidates },
         });
       }
 
